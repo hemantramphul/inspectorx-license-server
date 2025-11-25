@@ -44,25 +44,46 @@ def admin_create_or_list_clients():
 
     # 1) Check secret key
     if not APP_SECRET_KEY or secret != APP_SECRET_KEY:
-        # Secret wrong -> you can either show empty list or a small error
-        # Here we show no clients and let admin try again
-        return render_template(
-            "clients.html",
-            clients=[],
-        )
+        return render_template("clients.html", clients=[])
 
     # 2) If email is empty: just show list (no creation)
     if not email:
         clients = Client.query.order_by(Client.id.desc()).all()
         return render_template("clients.html", clients=clients)
 
-    # 3) If email is provided: create client then show list
-    existing = Client.query.filter_by(email=email).first()
-    if not existing:
-        c = Client(email=email, name=name, is_active=True)
-        db.session.add(c)
+    # 3) If email is provided: create client + license key
+    client = Client.query.filter_by(email=email).first()
+    if not client:
+        # generate license key
+        license_key = generate_license_key()
+
+        client = Client(
+            email=email,
+            name=name,
+            license_key=license_key,
+            is_active=True,
+        )
+        db.session.add(client)
         db.session.commit()
 
+        # create License entry tied to this client (user_id None for now)
+        lic = License(
+            license_key=license_key,
+            max_devices=1,
+            devices_json="[]",
+            user_id=None,
+            client_id=client.id,
+        )
+        db.session.add(lic)
+        db.session.commit()
+
+        # send license email (optional, best-effort only)
+        try:
+            send_license_email(email, license_key)
+        except Exception as e:
+            print("Error sending license email at client creation:", e)
+
+    # Reload list
     clients = Client.query.order_by(Client.id.desc()).all()
     return render_template("clients.html", clients=clients)
 
@@ -70,20 +91,51 @@ def admin_create_or_list_clients():
 @app.post("/api/admin/clients")
 def create_client():
     data = request.get_json(silent=True) or {}
-    email = data.get("email")
-    name = data.get("name")
+    email = (data.get("email") or "").strip()
+    name = (data.get("name") or "").strip()
 
     if not email:
         return jsonify(ok=False, error="MISSING_EMAIL"), 400
 
-    if Client.query.filter_by(email=email).first():
+    client = Client.query.filter_by(email=email).first()
+    if client:
         return jsonify(ok=False, error="CLIENT_EXISTS"), 400
 
-    client = Client(email=email, name=name, is_active=True)
+    license_key = generate_license_key()
+
+    client = Client(
+        email=email,
+        name=name,
+        license_key=license_key,
+        is_active=True,
+    )
     db.session.add(client)
     db.session.commit()
 
-    return jsonify(ok=True, message="CLIENT_CREATED")
+    lic = License(
+        license_key=license_key,
+        max_devices=1,
+        devices_json="[]",
+        user_id=None,
+        client_id=client.id,
+    )
+    db.session.add(lic)
+    db.session.commit()
+
+    try:
+        send_license_email(email, license_key)
+        email_sent = True
+    except Exception as e:
+        print("Error sending license email:", e)
+        email_sent = False
+
+    return jsonify(
+        ok=True,
+        message="CLIENT_CREATED",
+        email=email,
+        license_key=license_key,
+        email_sent=email_sent,
+    )
 
 # Registration 
 @app.post("/api/register")
@@ -92,60 +144,63 @@ def register():
 
     email = data.get("email")
     password = data.get("password")
+    license_key = data.get("license_key")
 
-    if not email or not password:
+    if not email or not password or not license_key:
         return jsonify(ok=False, error="MISSING_FIELDS"), 400
 
-    # 1) Check if this email is allowed as client
-    client = Client.query.filter_by(email=email).first()
-    if not client or not client.is_active:
-        return jsonify(ok=False, error="CLIENT_NOT_ALLOWED"), 403
+    # 1) Check if this email + license_key is a valid client
+    client = Client.query.filter_by(
+        email=email,
+        license_key=license_key,
+        is_active=True
+    ).first()
+
+    if not client:
+        return jsonify(ok=False, error="CLIENT_OR_LICENSE_INVALID"), 403
 
     # 2) Check if user already exists
     if User.query.filter_by(email=email).first():
         return jsonify(ok=False, error="EMAIL_EXISTS"), 400
 
-    # 3) Create user
+    # 3) Find existing license for this license_key
+    lic = License.query.filter_by(license_key=license_key).first()
+    if not lic:
+        return jsonify(ok=False, error="LICENSE_NOT_FOUND"), 500
+
+    # (optional) Check if this license is already linked to another user
+    if lic.user_id is not None:
+        return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
+
+    # 4) Create user
     user = User(
         email=email,
         password_hash=generate_password_hash(password),
     )
     db.session.add(user)
     db.session.commit()
-    
-    # Create a license key for this user
-    license_key = generate_license_key()
 
-    lic = License(
-        license_key=license_key,
-        max_devices=1,
-        devices_json="[]",
-        user_id=user.id,
-    )
-    db.session.add(lic)
+    # 5) Attach license to this user
+    lic.user_id = user.id
     db.session.commit()
 
-    # Send license key by email
-    try:
-        send_license_email(email, license_key)
-        email_sent = True
-    except Exception:
-        email_sent = False
-
+    # 6) Return license key and info
     return jsonify(
         ok=True,
         email=email,
         license_key=license_key,
-        max_devices=lic.max_devices,
-        email_sent=email_sent
+        max_devices=lic.max_devices
     )
 
 # Login
 @app.post("/api/login")
 def login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     email = data.get("email")
     password = data.get("password")
+
+    if not email or not password:
+        return jsonify(ok=False, error="MISSING_FIELDS"), 400
 
     user = User.query.filter_by(email=email).first()
     if not user or not check_password_hash(user.password_hash, password):
@@ -210,7 +265,10 @@ def activate_license():
     lic.devices_json = json.dumps(devices)
 
     if lic.user_id is None:
+        # allow binding if license has no user yet
         lic.user_id = user.id
+    elif lic.user_id != user.id:
+        return jsonify(ok=False, error="LICENSE_NOT_OWNED_BY_USER"), 403
 
     db.session.commit()
 
