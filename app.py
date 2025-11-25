@@ -14,6 +14,8 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # Initialize db with this app
 db.init_app(app)
 
+with app.app_context():
+    db.create_all()
 
 @app.post("/api/register")
 def register():
@@ -128,9 +130,31 @@ def list_licenses():
     return jsonify(ok=True, data=data)
 
 
-if __name__ == "__main__":
-    # Create DB tables on startup (Flask 3 compatible)
-    with app.app_context():
-        db.create_all()
+@app.delete("/api/admin/users")
+def delete_user():
+    """
+    Delete a registered user and all their licenses.
+    Body: { "email": "user@example.com" }
+    """
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
 
+    if not email:
+        return jsonify(ok=False, error="MISSING_EMAIL"), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify(ok=False, error="USER_NOT_FOUND"), 404
+
+    # Delete all licenses for this user
+    License.query.filter_by(user_id=user.id).delete()
+
+    # Delete the user
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify(ok=True, message=f"User {email} and their licenses deleted")
+
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
