@@ -14,9 +14,11 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # Initialize db with this app
 db.init_app(app)
 
+# Create DB tables on startup (Flask 3 compatible)
 with app.app_context():
     db.create_all()
 
+# Registration 
 @app.post("/api/register")
 def register():
     # `silent=True` -> don't raise if JSON is missing
@@ -39,7 +41,7 @@ def register():
     db.session.commit()
     return jsonify(ok=True)
 
-
+# Login
 @app.post("/api/login")
 def login():
     data = request.get_json()
@@ -52,7 +54,33 @@ def login():
 
     return jsonify(ok=True, user_id=user.id)
 
+# Create License
+@app.post("/api/admin/licenses")
+def create_license():
+    data = request.get_json(silent=True) or {}
+    license_key = data.get("license_key")
+    max_devices = data.get("max_devices", 1)
 
+    if not license_key:
+        return jsonify(ok=False, error="MISSING_LICENSE_KEY"), 400
+
+    # Check if already exists
+    existing = License.query.filter_by(license_key=license_key).first()
+    if existing:
+        return jsonify(ok=False, error="LICENSE_EXISTS"), 400
+
+    lic = License(
+        license_key=license_key,
+        max_devices=max_devices,
+        devices_json="[]",
+        user_id=None,  # will be linked on first activation
+    )
+    db.session.add(lic)
+    db.session.commit()
+
+    return jsonify(ok=True, message="LICENSE_CREATED")
+
+# License Activation
 @app.post("/api/licenses/activate")
 def activate_license():
     data = request.get_json()
@@ -89,7 +117,7 @@ def activate_license():
 
     return jsonify(ok=True, message="LICENSE_ACTIVATED")
 
-
+# License Status
 @app.get("/api/licenses/status")
 def license_status():
     license_key = request.args.get("license_key")
@@ -102,7 +130,7 @@ def license_status():
     devices = json.loads(lic.devices_json or "[]")
     return jsonify(ok=True, active=(machine_id in devices))
 
-
+# List all licenses
 @app.get("/api/admin/licenses")
 def list_licenses():
     """
@@ -129,7 +157,7 @@ def list_licenses():
 
     return jsonify(ok=True, data=data)
 
-
+# Delete user and their licenses
 @app.delete("/api/admin/users")
 def delete_user():
     """
@@ -155,6 +183,6 @@ def delete_user():
 
     return jsonify(ok=True, message=f"User {email} and their licenses deleted")
 
-
+# Run the app
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
