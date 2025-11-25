@@ -62,6 +62,7 @@
           <th>ID</th>
           <th>Email</th>
           <th>Nom</th>
+          <th>Licence</th>
           <th>Actif</th>
         </tr>
       </thead>
@@ -71,6 +72,7 @@
           <td>{{ c.id }}</td>
           <td>{{ c.email }}</td>
           <td>{{ c.name or "" }}</td>
+          <td>{{ c.license_key }}</td>
           <td>{{ "Oui" if c.is_active else "Non" }}</td>
         </tr>
         {% endfor %}
