@@ -17,7 +17,9 @@ db.init_app(app)
 
 @app.post("/api/register")
 def register():
-    data = request.get_json()
+    # `silent=True` -> don't raise if JSON is missing
+    data = request.get_json(silent=True) or {}
+
     email = data.get("email")
     password = data.get("password")
 
