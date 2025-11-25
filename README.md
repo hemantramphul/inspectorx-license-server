@@ -1,46 +1,67 @@
 # InspectorX License Server
 
-A lightweight **API-only** Flask service to manage user registration and software license activation.
+**InspectorX license server** to manage:
 
-This project is designed to be used by desktop apps like **InspectorX** (Electron, Python, etc.) to enforce rules such as:
+- Client onboarding by Lynxdrone admins
+- User registration (email + password + license key)
+- Per-machine license activation for desktop apps like **InspectorX**
 
-- One license key → limited number of machines (e.g. 1 PC per license)
-- License activation per machine using a **machine ID**
-- Simple admin endpoints to list users and license activations
+It is designed to be called from desktop apps and to enforce rules such as:
 
----
+- **One license key → limited number of machines** (e.g. 1 PC per license)
+- **Activation per machine** using a unique machine ID
+- **Central control** of which clients are allowed to register
 
 ## Features
 
-- User registration (`/api/register`)
-- User login (`/api/login`)
-- License activation per machine (`/api/licenses/activate`)
-- License status check (`/api/licenses/status`)
-- Admin endpoints to list:
-  - all users + their licenses (`/api/admin/registrations`)
-  - flat list of licenses + email (`/api/admin/licenses`)
-- Uses **SQLite** (file-based DB) via SQLAlchemy
-- API-only (JSON), no frontend
+### Admin side
 
----
+- **Admin UI** at `/` and `/admin/clients`:
+  - Protected by a **secret key** (`APP_SECRET_KEY`)
+  - Form to **add a client** (email, name, secret)
+  - Auto-generates a **license key** and stores it in the DB
+  - Shows a table with all clients + their license keys
+- JSON admin APIs:
+  - `POST /api/admin/clients` → create a client + license (for programmatic use)
+  - `GET  /api/admin/licenses` → flat list of licenses + email + devices
+  - `DELETE /api/admin/users` → delete a user and all their licenses
+- Optional: sends the license key by email when a client is created (SMTP config).
+
+### Client / User side
+
+- **Registration** (`POST /api/register`)
+  - Requires: `email`, `password`, `license_key`
+  - Checks that `(email, license_key)` exists in `Client` table and is active
+  - Creates a `User` and binds the **existing** license to this user
+- **Login** (`POST /api/login`)
+- **License activation** (`POST /api/licenses/activate`)
+  - Requires: `email`, `license_key`, `machine_id`
+  - Links the license to specific machines (up to `max_devices`)
+- **License status check** (`GET /api/licenses/status`)
+  - Query params: `license_key`, `machine_id`
+  - Returns whether the license is active on that machine
 
 ## Tech Stack
 
 - **Python** 3.8+
-- **Flask** (web framework)
-- **Flask-SQLAlchemy** (ORM)
-- **Werkzeug** (password hashing)
-- **SQLite** (default database)
-
----
+- **Flask** – web framework
+- **Flask-SQLAlchemy** – ORM
+- **Werkzeug** – password hashing
+- **SQLite** – file-based DB
+- **python-dotenv** – load local `.env`
+- Optional: SMTP (company mail server) to send license keys
 
 ## Project Structure
 
 ```text
 inspectorx-license-server/
-  app.py                    # Flask app & routes
-  models.py                 # SQLAlchemy models (User, License)
+  app.py                  # Flask app & routes (admin + API)
+  models.py               # SQLAlchemy models (Client, User, License)
+  license.py              # Helpers: generate_license_key, send_license_email
+  templates/
+    clients.html          # Minimal admin UI to create/list clients
   requirements.txt
-  instance/licenses.db      # SQLite database (auto-created)
-  .venv/                    # Python virtual environment (optional, local)
+  instance/licenses.db    # SQLite database (auto-created in project root)
+  .env                    # Local env vars (not committed)
+  .venv/                  # Python virtual environment (local only, optional)
 ```
