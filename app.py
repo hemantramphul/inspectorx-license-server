@@ -1,9 +1,14 @@
-# app.py
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 import json
 
-from models import db, User, License  
+from license import generate_license_key, send_license_email
+from models import Client, db, User, License  
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 
 app = Flask(__name__)
 
@@ -14,14 +19,75 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # Initialize db with this app
 db.init_app(app)
 
-# Create DB tables on startup (Flask 3 compatible)
+# Create DB tables on startup
 with app.app_context():
     db.create_all()
+
+
+@app.get("/")
+def home():
+    # At first load, we don't show any clients until secret is submitted
+    return render_template("clients.html", clients=[])
+
+
+@app.get("/admin/clients")
+def admin_list_clients():
+    # Same as home for GET: no list until valid secret posted
+    return render_template("clients.html", clients=[])
+
+
+@app.post("/admin/clients")
+def admin_create_or_list_clients():
+    email = (request.form.get("email") or "").strip()
+    name = (request.form.get("name") or "").strip()
+    secret = (request.form.get("secret") or "").strip()
+
+    # 1) Check secret key
+    if not APP_SECRET_KEY or secret != APP_SECRET_KEY:
+        # Secret wrong -> you can either show empty list or a small error
+        # Here we show no clients and let admin try again
+        return render_template(
+            "clients.html",
+            clients=[],
+        )
+
+    # 2) If email is empty: just show list (no creation)
+    if not email:
+        clients = Client.query.order_by(Client.id.desc()).all()
+        return render_template("clients.html", clients=clients)
+
+    # 3) If email is provided: create client then show list
+    existing = Client.query.filter_by(email=email).first()
+    if not existing:
+        c = Client(email=email, name=name, is_active=True)
+        db.session.add(c)
+        db.session.commit()
+
+    clients = Client.query.order_by(Client.id.desc()).all()
+    return render_template("clients.html", clients=clients)
+
+# Create Client
+@app.post("/api/admin/clients")
+def create_client():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    name = data.get("name")
+
+    if not email:
+        return jsonify(ok=False, error="MISSING_EMAIL"), 400
+
+    if Client.query.filter_by(email=email).first():
+        return jsonify(ok=False, error="CLIENT_EXISTS"), 400
+
+    client = Client(email=email, name=name, is_active=True)
+    db.session.add(client)
+    db.session.commit()
+
+    return jsonify(ok=True, message="CLIENT_CREATED")
 
 # Registration 
 @app.post("/api/register")
 def register():
-    # `silent=True` -> don't raise if JSON is missing
     data = request.get_json(silent=True) or {}
 
     email = data.get("email")
@@ -30,16 +96,49 @@ def register():
     if not email or not password:
         return jsonify(ok=False, error="MISSING_FIELDS"), 400
 
+    # 1) Check if this email is allowed as client
+    client = Client.query.filter_by(email=email).first()
+    if not client or not client.is_active:
+        return jsonify(ok=False, error="CLIENT_NOT_ALLOWED"), 403
+
+    # 2) Check if user already exists
     if User.query.filter_by(email=email).first():
         return jsonify(ok=False, error="EMAIL_EXISTS"), 400
 
+    # 3) Create user
     user = User(
         email=email,
         password_hash=generate_password_hash(password),
     )
     db.session.add(user)
     db.session.commit()
-    return jsonify(ok=True)
+    
+    # Create a license key for this user
+    license_key = generate_license_key()
+
+    lic = License(
+        license_key=license_key,
+        max_devices=1,
+        devices_json="[]",
+        user_id=user.id,
+    )
+    db.session.add(lic)
+    db.session.commit()
+
+    # Send license key by email
+    try:
+        send_license_email(email, license_key)
+        email_sent = True
+    except Exception:
+        email_sent = False
+
+    return jsonify(
+        ok=True,
+        email=email,
+        license_key=license_key,
+        max_devices=lic.max_devices,
+        email_sent=email_sent
+    )
 
 # Login
 @app.post("/api/login")
