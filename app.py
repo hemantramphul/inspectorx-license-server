@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, Response, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 import json
-
+import re
 from license import generate_license_key, send_license_email
 from models import Client, db, User, License  
 import os
@@ -462,6 +462,63 @@ def deactivate_license():
     db.session.commit()
 
     return jsonify(ok=True, message="LICENSE_DEACTIVATED", devices=devices)
+
+
+@app.post("/api/account/reset-pin")
+def reset_pin():
+    """
+    Reset the 4-digit PIN for an existing user, using email + license_key
+    as proof of ownership.
+
+    Body JSON: { "email": "...", "license_key": "...", "new_pin": "1234" }
+    """
+    data = request.get_json(silent=True) or {}
+
+    email = (data.get("email") or "").strip()
+    license_key = (data.get("license_key") or "").strip()
+    new_pin = (data.get("new_pin") or "").strip()
+
+    if not email or not license_key or not new_pin:
+        return jsonify(ok=False, error="MISSING_FIELDS"), 400
+
+    # enforce 4-digit numeric PIN
+    if not re.fullmatch(r"\d{4}", new_pin):
+        return jsonify(ok=False, error="INVALID_PIN_FORMAT"), 400
+
+    # 1) Check client (email + license key must exist & be active)
+    client = Client.query.filter_by(
+        email=email,
+        license_key=license_key,
+        is_active=True
+    ).first()
+
+    if not client:
+        return jsonify(ok=False, error="CLIENT_OR_LICENSE_INVALID"), 403
+
+    # 2) Check user exists
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify(ok=False, error="USER_NOT_FOUND"), 404
+
+    # 3) Check license & ownership
+    lic = License.query.filter_by(license_key=license_key).first()
+    if not lic:
+        return jsonify(ok=False, error="LICENSE_NOT_FOUND"), 500
+
+    # License belongs to another user? (paranoia check)
+    if lic.user_id is not None and lic.user_id != user.id:
+        return jsonify(ok=False, error="LICENSE_NOT_OWNED_BY_USER"), 403
+
+    # If license has no user yet, bind it now
+    if lic.user_id is None:
+        lic.user_id = user.id
+
+    # 4) Update PIN
+    user.password_hash = generate_password_hash(new_pin)
+    db.session.commit()
+
+    return jsonify(ok=True, message="PIN_RESET_OK")
+
 
 # Run the app
 if __name__ == "__main__":
