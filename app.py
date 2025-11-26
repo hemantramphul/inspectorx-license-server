@@ -159,20 +159,47 @@ def register():
     if not client:
         return jsonify(ok=False, error="CLIENT_OR_LICENSE_INVALID"), 403
 
-    # 2) Check if user already exists
-    if User.query.filter_by(email=email).first():
-        return jsonify(ok=False, error="EMAIL_EXISTS"), 400
-
-    # 3) Find existing license for this license_key
+    # 2) Fetch existing user (if any) and license
+    user = User.query.filter_by(email=email).first()
     lic = License.query.filter_by(license_key=license_key).first()
+
     if not lic:
         return jsonify(ok=False, error="LICENSE_NOT_FOUND"), 500
 
-    # (optional) Check if this license is already linked to another user
+    # ─────────────────────────────────────────
+    # CASE A: user already exists (re-register)
+    # ─────────────────────────────────────────
+    if user:
+        # Check PIN
+        if not check_password_hash(user.password_hash, password):
+            return jsonify(ok=False, error="INVALID_CREDENTIALS"), 400
+
+        # License already bound to another user?
+        if lic.user_id is not None and lic.user_id != user.id:
+            return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
+
+        # If license not yet bound, bind it now
+        if lic.user_id is None:
+            lic.user_id = user.id
+            db.session.commit()
+
+        # Idempotent success: user + license already set up
+        return jsonify(
+            ok=True,
+            email=email,
+            license_key=license_key,
+            max_devices=lic.max_devices
+        )
+
+    # ─────────────────────────────────────────
+    # CASE B: user does not exist yet (first registration)
+    # ─────────────────────────────────────────
+
+    # If license is already bound to SOME user, we cannot reuse
     if lic.user_id is not None:
         return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
 
-    # 4) Create user
+    # 3) Create user
     user = User(
         email=email,
         password_hash=generate_password_hash(password),
@@ -180,17 +207,72 @@ def register():
     db.session.add(user)
     db.session.commit()
 
-    # 5) Attach license to this user
+    # 4) Attach license to this user
     lic.user_id = user.id
     db.session.commit()
 
-    # 6) Return license key and info
+    # 5) Return license key and info
     return jsonify(
         ok=True,
         email=email,
         license_key=license_key,
         max_devices=lic.max_devices
     )
+
+# # Registration 
+# @app.post("/api/register")
+# def register():
+#     data = request.get_json(silent=True) or {}
+
+#     email = data.get("email")
+#     password = data.get("password")
+#     license_key = data.get("license_key")
+
+#     if not email or not password or not license_key:
+#         return jsonify(ok=False, error="MISSING_FIELDS"), 400
+
+#     # 1) Check if this email + license_key is a valid client
+#     client = Client.query.filter_by(
+#         email=email,
+#         license_key=license_key,
+#         is_active=True
+#     ).first()
+
+#     if not client:
+#         return jsonify(ok=False, error="CLIENT_OR_LICENSE_INVALID"), 403
+
+#     # 2) Check if user already exists
+#     if User.query.filter_by(email=email).first():
+#         return jsonify(ok=False, error="EMAIL_EXISTS"), 400
+
+#     # 3) Find existing license for this license_key
+#     lic = License.query.filter_by(license_key=license_key).first()
+#     if not lic:
+#         return jsonify(ok=False, error="LICENSE_NOT_FOUND"), 500
+
+#     # (optional) Check if this license is already linked to another user
+#     if lic.user_id is not None:
+#         return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
+
+#     # 4) Create user
+#     user = User(
+#         email=email,
+#         password_hash=generate_password_hash(password),
+#     )
+#     db.session.add(user)
+#     db.session.commit()
+
+#     # 5) Attach license to this user
+#     lic.user_id = user.id
+#     db.session.commit()
+
+#     # 6) Return license key and info
+#     return jsonify(
+#         ok=True,
+#         email=email,
+#         license_key=license_key,
+#         max_devices=lic.max_devices
+#     )
 
 # Login
 @app.post("/api/login")
