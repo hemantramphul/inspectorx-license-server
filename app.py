@@ -167,23 +167,26 @@ def register():
         return jsonify(ok=False, error="LICENSE_NOT_FOUND"), 500
 
     # ─────────────────────────────────────────
-    # CASE A: user already exists (re-register)
+    # CASE A: user already exists (re-register or change PIN)
     # ─────────────────────────────────────────
     if user:
-        # Check PIN
-        if not check_password_hash(user.password_hash, password):
-            return jsonify(ok=False, error="INVALID_CREDENTIALS"), 400
-
         # License already bound to another user?
         if lic.user_id is not None and lic.user_id != user.id:
             return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
 
-        # If license not yet bound, bind it now
+        # At this point, license is either free or belongs to this user.
+        # We allow updating the PIN to the new one the user typed.
+        if not check_password_hash(user.password_hash, password):
+            # New PIN -> update hash
+            user.password_hash = generate_password_hash(password)
+
+        # Bind license to this user if not already done
         if lic.user_id is None:
             lic.user_id = user.id
-            db.session.commit()
 
-        # Idempotent success: user + license already set up
+        db.session.commit()
+
+        # Idempotent success: user + license already set up (with possibly new PIN)
         return jsonify(
             ok=True,
             email=email,
@@ -199,7 +202,7 @@ def register():
     if lic.user_id is not None:
         return jsonify(ok=False, error="LICENSE_ALREADY_USED"), 400
 
-    # 3) Create user
+    # 3) Create user with new PIN
     user = User(
         email=email,
         password_hash=generate_password_hash(password),
