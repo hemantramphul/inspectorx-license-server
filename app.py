@@ -340,6 +340,44 @@ def delete_user():
 
     return jsonify(ok=True, message=f"User {email} and their licenses deleted")
 
+# License Deactivation (remove one machine from a license)
+@app.post("/api/licenses/deactivate")
+def deactivate_license():
+    data = request.get_json(silent=True) or {}
+    license_key = data.get("license_key")
+    machine_id = data.get("machine_id")
+    email = data.get("email")
+
+    if not license_key or not machine_id or not email:
+        return jsonify(ok=False, error="MISSING_FIELDS"), 400
+
+    # Check user exists
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify(ok=False, error="UNKNOWN_USER"), 400
+
+    # Check license exists
+    lic = License.query.filter_by(license_key=license_key).first()
+    if not lic:
+        return jsonify(ok=False, error="INVALID_LICENSE"), 400
+
+    # License must belong to this user (if already bound)
+    if lic.user_id is not None and lic.user_id != user.id:
+        return jsonify(ok=False, error="LICENSE_NOT_OWNED_BY_USER"), 403
+
+    devices = json.loads(lic.devices_json or "[]")
+
+    if machine_id not in devices:
+        # already not active on this machine → don't fail hard
+        return jsonify(ok=True, message="ALREADY_DEACTIVATED")
+
+    # Remove this machine from the list
+    devices = [d for d in devices if d != machine_id]
+    lic.devices_json = json.dumps(devices)
+    db.session.commit()
+
+    return jsonify(ok=True, message="LICENSE_DEACTIVATED", devices=devices)
+
 # Run the app
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
