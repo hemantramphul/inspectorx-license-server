@@ -1,5 +1,5 @@
-flask
-flask_sqlalchemy
-werkzeug
+Flask
+Flask-SQLAlchemy
 python-dotenv
 gunicorn
+psycopg2-binary

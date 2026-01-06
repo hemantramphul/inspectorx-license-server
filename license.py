@@ -1,3 +1,5 @@
+# licence.py
+
 from email.mime.text import MIMEText
 import os
 import secrets

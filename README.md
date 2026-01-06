@@ -47,7 +47,9 @@ It is designed to be called from desktop apps and to enforce rules such as:
 - **Flask** – web framework
 - **Flask-SQLAlchemy** – ORM
 - **Werkzeug** – password hashing
-- **SQLite** – file-based DB
+- **PostgreSQL** – production DB (via DATABASE_URL)
+- **SQLite** – local dev fallback (optional)
+- **psycopg2-binary** – Postgres driver
 - **python-dotenv** – load local `.env`
 - Optional: SMTP (company mail server) to send license keys
 
@@ -61,7 +63,7 @@ inspectorx-license-server/
   templates/
     clients.html          # Minimal admin UI to create/list clients
   requirements.txt
-  instance/licenses.db    # SQLite database (auto-created in project root)
+  instance/licenses.db    # SQLite database (local dev only, optional)
   .env                    # Local env vars (not committed)
   .venv/                  # Python virtual environment (local only, optional)
 ```

@@ -1,3 +1,5 @@
+# app.py
+
 from flask import Flask, request, jsonify, Response, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 import json
@@ -12,8 +14,18 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 
 app = Flask(__name__)
 
-# SQLite file in the same folder
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///licenses.db"
+db_url = os.getenv("DATABASE_URL")
+
+if db_url:
+    # Some providers use postgres:// but SQLAlchemy expects postgresql://
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+else:
+    # Local fallback
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///licenses.db"
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Initialize db with this app
