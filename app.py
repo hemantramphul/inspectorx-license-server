@@ -78,10 +78,10 @@ def admin_create_or_list_clients():
         db.session.commit()
 
         # send license email (optional, best-effort only)
-        try:
-            send_license_email(email, license_key)
-        except Exception as e:
-            print("Error sending license email at client creation:", e)
+        # try:
+        #     send_license_email(email, license_key)
+        # except Exception as e:
+        #     print("Error sending license email at client creation:", e)
 
     # Reload list
     clients = Client.query.order_by(Client.id.desc()).all()
@@ -123,7 +123,7 @@ def create_client():
     db.session.commit()
 
     try:
-        send_license_email(email, license_key)
+        # send_license_email(email, license_key)
         email_sent = True
     except Exception as e:
         print("Error sending license email:", e)
